@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/pandada8/logd/lib/sig"
 	"github.com/spf13/viper"
@@ -17,7 +18,7 @@ import (
 var (
 	mode    = "aio"
 	msgChan = make(chan *syslog.SyslogMessage)
-	ctlSig  sig.Sig
+	ctlSig  *sig.Sig
 )
 
 func signalHandler(ch chan os.Signal) {
@@ -27,7 +28,7 @@ func signalHandler(ch chan os.Signal) {
 		case syscall.SIGINT:
 			fallthrough
 		case syscall.SIGTERM:
-			fmt.Printf("signal %v received, prepare for quiting", s)
+			fmt.Printf("signal %v received, prepare for quiting\n", s)
 			ctlSig.Send("quit")
 		}
 	}
@@ -41,7 +42,7 @@ func usage() {
 
 func main() {
 	validString := map[string]bool{"aio": true, "collect": true, "dump": true}
-
+	ctlSig = sig.NewStringSig()
 	log.Println("loading config...")
 	viper.SetDefault("listen", "udp://localhost:1514")
 	viper.SetDefault("verbose", true)
@@ -61,28 +62,51 @@ func main() {
 	log.Printf("%s mode started", mode)
 
 	singalChan := make(chan os.Signal, 1)
-	signal.Notify(singalChan, syscall.SIGTERM, syscall.SIGINT)
+	signal.Notify(singalChan, syscall.SIGINT, syscall.SIGTERM)
 	go signalHandler(singalChan)
 
 	switch mode {
 	case "aio":
 		// start dumper
-		go func() {
-			dumper()
-		}()
+		go dumper()
 		fallthrough
 	case "collect":
-		serve(viper.GetString("listen"))
+		go collecter(viper.GetString("listen"))
 	case "dump":
 		// start dumper
 		fmt.Println("not implemented yet")
 	}
+	<-ctlSig.Close
+	log.Println("Quited")
 }
 
-func serve(listen string) {
+func collecter(listen string) {
 	//TODO: handle ^C
 	p := syslog.NewParser()
 	var events evio.Events
+
+	ctlChan := ctlSig.Recv()
+	var ctl string
+	defer func() {
+		ctlSig.Clean(ctlChan)
+	}()
+
+	go func() {
+		for {
+			ctl = <-*ctlChan
+		}
+	}()
+
+	events.Tick = func() (delay time.Duration, action evio.Action) {
+		delay = 1 * time.Second
+		// fmt.Printf("tick %s", ctl)
+		if ctl == "quit" {
+			action = evio.Shutdown
+			log.Println("Close Collector")
+		}
+		return
+	}
+
 	events.Data = func(id int, in []byte) (out []byte, action evio.Action) {
 		// id has no means when used in udp
 		bestEffort := true

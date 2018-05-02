@@ -1,34 +1,35 @@
 package sig
 
 type Sig struct {
-	listerner []chan string
+	listerner []*chan string
+	Close     chan string
 }
 
 func NewStringSig() *Sig {
-	return &Sig{}
-}
-
-func (sig Sig) Send(control string) {
-	for _, i := range sig.listerner {
-		go func(control string) {
-			i <- control
-		}(control)
+	return &Sig{
+		Close: make(chan string, 1),
 	}
 }
 
-func (sig Sig) Recv() *chan string {
-	ch := make(chan string)
-	sig.listerner = append(sig.listerner, ch)
+func (sig *Sig) Send(control string) {
+	for _, i := range sig.listerner {
+		*i <- control
+	}
+}
+
+func (sig *Sig) Recv() *chan string {
+	ch := make(chan string, 1)
+	sig.listerner = append(sig.listerner, &ch)
 	return &ch
 }
 
-func (sig Sig) Clean(ch *chan string) {
+func (sig *Sig) Clean(ch *chan string) {
 	var (
 		num = -1
 		l   = sig.listerner
 	)
 	for n, i := range l {
-		if i == *ch {
+		if i == ch {
 			num = n
 			break
 		}
@@ -38,5 +39,8 @@ func (sig Sig) Clean(ch *chan string) {
 		l[num] = l[0]
 		// remove first
 		sig.listerner = l[1:]
+	}
+	if len(sig.listerner) == 0 {
+		sig.Close <- ""
 	}
 }
