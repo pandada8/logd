@@ -6,7 +6,6 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/globalsign/mgo/bson"
 	syslog "github.com/influxdata/go-syslog/rfc5424"
 )
 
@@ -32,17 +31,19 @@ func getConvertName(name string) string {
 
 func Marshal(input interface{}) (ret map[string]interface{}, err error) {
 	indirect := reflect.ValueOf(input)
+	if indirect.Kind() == reflect.Ptr {
+		indirect = indirect.Elem()
+	}
 	if indirect.Kind() != reflect.Struct {
 		err = errors.New("Wrong Type")
 	}
-	ret = bson.M{}
+	ret = map[string]interface{}{}
 	for i := 0; i < indirect.NumField(); i++ {
 
 		field := indirect.Field(i)
 		fieldName := indirect.Type().Field(i).Name
 		mappedFieldName := getConvertName(fieldName)
-
-		if isZeroValue(field.Interface()) {
+		if !field.CanSet() || isZeroValue(field.Interface()) {
 			continue
 		}
 

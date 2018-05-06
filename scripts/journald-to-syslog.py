@@ -30,8 +30,8 @@ def get_id(cursor):
 def get_struct(obj):
     struct = {i: obj[i] for i in obj if i[0] != '_' and i not in GROUP}
     if len(struct) == 0:
-        return ' [test]'
-    ret = " [test {}]".format(" ".join(i + '=' + j for i, j in struct.items()))
+        return ' -'
+    ret = " [test {}]".format(" ".join(i + '=' + json.dumps(j) for i, j in struct.items() if '\n' not in j))
     return ret
 
 def send_log(obj):

@@ -187,7 +187,13 @@ func main() {
 		go aioDumper()
 		fallthrough
 	case "collect":
-		go collecter(viper.GetString("listen"))
+		listen := viper.GetString("listen")
+		if viper.GetBool("reuseport") {
+			listen = fmt.Sprintf("udp://%s?reuseport", listen)
+		} else {
+			listen = fmt.Sprintf("udp://%s", listen)
+		}
+		go collecter(listen)
 	case "dump":
 		// start dumper
 		fmt.Println("not implemented yet")
@@ -231,7 +237,7 @@ func collecter(listen string) {
 		bestEffort := true
 		m, e := p.Parse(in, &bestEffort)
 		if e != nil {
-			fmt.Printf("failed to parse: %s\n", in)
+			fmt.Printf("failed to parse: %s\n err: %s\n", in, e)
 			// ignore
 			return
 		}
