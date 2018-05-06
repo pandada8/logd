@@ -1,0 +1,21 @@
+listen: localhost:1514
+reuseport: false
+output:
+  - name: local
+    type: fs
+    location: "/tmp/test/"
+  - name: s3
+    type: s3
+    endpoint: s3
+    appkey: ""
+    secret: ""
+  - name: hdfs
+    type: hdfs
+    endpoint: "node:8081"
+rules:
+  - match:
+      hostname: "node1"
+    to: 'hdfs'
+  - match:
+      appname: /node1/
+    to: 'local'
