@@ -101,6 +101,7 @@ func (matcher *Matcher) Match(payload map[string]interface{}) (output string, ma
 }
 
 func GenDumpers() (dumpers map[string]dumper.Dumper) {
+	dumpers = map[string]dumper.Dumper{}
 	output := viper.Get("output").([]interface{})
 	for n, i := range output {
 		cfg := i.(map[interface{}]interface{})

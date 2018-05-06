@@ -106,6 +106,7 @@ func GetBy(source interface{}, path string) interface{} {
 }
 
 func ToStringMap(source map[interface{}]interface{}) (output map[string]string) {
+	output = map[string]string{}
 	for k, v := range source {
 		k, k_ok := k.(string)
 		v, v_ok := v.(string)
