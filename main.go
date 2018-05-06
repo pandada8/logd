@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/pandada8/logd/lib/common"
 	"github.com/pandada8/logd/lib/dumper"
 	"github.com/pandada8/logd/lib/sig"
 	"github.com/spf13/viper"
@@ -19,7 +20,7 @@ import (
 
 var (
 	mode    = "aio"
-	msgChan = make(chan *syslog.SyslogMessage)
+	msgChan = make(chan *common.Message)
 	ctlSig  *sig.Sig
 )
 
@@ -49,9 +50,8 @@ func getLength(i interface{}) int {
 	v := reflect.ValueOf(i)
 	if v.Kind() == reflect.Array || v.Kind() == reflect.Slice {
 		return v.Len()
-	} else {
-		return 0
 	}
+	return 0
 }
 
 func main() {
@@ -80,9 +80,8 @@ func main() {
 			usage()
 			os.Exit(1)
 			return
-		} else {
-			mode = m
 		}
+		mode = m
 	}
 	log.Printf("%s mode started", mode)
 
@@ -141,9 +140,10 @@ func collecter(listen string) {
 			// ignore
 			return
 		}
+		// FIXME: run matcher
 		if mode == "aio" {
 			// send to the chan
-			msgChan <- m
+			msgChan <- &common.Message{Message: m}
 		} else {
 			// send to the redis
 			fmt.Println("")
@@ -190,8 +190,12 @@ func aioDumper() {
 		case msg := <-msgChan:
 			fmt.Println(msg)
 			// FIXME: run the matcher
-			dumper := dumpers[""]
-			dumper.WriteLine(*msg.Message)
+			dumper, found := dumpers[msg.Output]
+			if found {
+				dumper.WriteLine(msg.ToJSONString())
+			} else {
+				log.Printf("[dump] fail to find output of %s", msg.Output)
+			}
 		}
 	}
 }
