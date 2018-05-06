@@ -23,10 +23,11 @@ var (
 	mode    = "aio"
 	msgChan = make(chan *common.Message)
 	ctlSig  *sig.Sig
+	force   = false
 )
 
 type Matcher struct {
-	rules []MatcherRuleSet
+	Rules []MatcherRuleSet
 }
 
 type MatcherRuleSet struct {
@@ -35,8 +36,9 @@ type MatcherRuleSet struct {
 }
 
 type MatcherRule struct {
-	Field string
-	Match *regexp.Regexp
+	Field  string
+	Match  *regexp.Regexp
+	String *string
 }
 
 func NewMatcher() *Matcher {
@@ -52,6 +54,9 @@ func NewMatcher() *Matcher {
 		s := MatcherRuleSet{}
 		r := rawRules[n].(map[interface{}]interface{})
 		s.Output = common.GetStringBy(r, "output")
+		if s.Output == "" {
+			s.Output = "default"
+		}
 		matches, ok := common.GetBy(r, "match").(map[interface{}]interface{})
 		if ok {
 			for field, reg := range common.ToStringMap(matches) {
@@ -61,14 +66,14 @@ func NewMatcher() *Matcher {
 				}
 				if reg[0] == '/' && reg[len(reg)-1] == '/' {
 					reg = reg[1 : len(reg)-1]
+					m.Match, err = regexp.Compile(reg)
 				} else {
-					reg = regexp.QuoteMeta(reg)
+					m.String = &reg
 				}
-				m.Match, err = regexp.Compile(reg)
 				if err != nil {
 					continue
 				}
-
+				s.Rules = append(s.Rules, m)
 			}
 			rules = append(rules, s)
 		}
@@ -77,23 +82,31 @@ func NewMatcher() *Matcher {
 }
 
 func (matcher *Matcher) Match(payload map[string]interface{}) (output string, matched bool) {
-	if len(matcher.rules) == 0 {
+	if len(matcher.Rules) == 0 {
 		output = "default"
 		matched = true
 	} else {
-		for _, set := range matcher.rules {
+		for _, set := range matcher.Rules {
 			for _, rule := range set.Rules {
 				f := common.GetStringBy(payload, rule.Field)
 				if f == "" {
 					continue
 				}
-				if rule.Match.MatchString(f) {
-					matched = true
-					break
+				if rule.Match != nil {
+					if rule.Match.MatchString(f) {
+						matched = true
+						break
+					}
+				} else if rule.String != nil {
+					if *rule.String == f {
+						matched = true
+						break
+					}
 				}
 			}
 			if matched {
 				output = set.Output
+				break
 			}
 		}
 	}
@@ -123,8 +136,14 @@ func signalHandler(ch chan os.Signal) {
 		case syscall.SIGINT:
 			fallthrough
 		case syscall.SIGTERM:
-			fmt.Printf("signal %v received, prepare for quiting\n", s)
-			ctlSig.Send("quit")
+			if force {
+				os.Exit(255)
+			} else {
+				fmt.Printf("signal %v received, prepare for quiting\n", s)
+				ctlSig.Send("quit")
+				force = true
+			}
+
 		}
 	}
 }
@@ -284,7 +303,6 @@ func aioDumper() {
 				return
 			}
 		case msg := <-msgChan:
-			fmt.Println(msg)
 			// FIXME: run the matcher
 			dumper, found := dumpers[msg.Output]
 			if found {
