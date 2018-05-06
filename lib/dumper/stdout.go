@@ -11,6 +11,8 @@ type STDOUTDumper struct {
 func (d *STDOUTDumper) Init(config map[interface{}]interface{}) (err error) {
 	if prefix, found := config["prefix"]; found {
 		d.prefix = prefix.(string)
+	} else {
+		d.prefix = "default"
 	}
 	return nil
 }
