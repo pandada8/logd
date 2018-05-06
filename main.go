@@ -102,7 +102,7 @@ func main() {
 		fmt.Println("not implemented yet")
 	}
 	<-ctlSig.Close
-	log.Println("Quited")
+	log.Println("quited")
 }
 
 func collecter(listen string) {
@@ -127,7 +127,7 @@ func collecter(listen string) {
 		// fmt.Printf("tick %s", ctl)
 		if ctl == "quit" {
 			action = evio.Shutdown
-			log.Println("Close Collector")
+			log.Println("close Collector")
 		}
 		return
 	}
@@ -180,10 +180,11 @@ func aioDumper() {
 		select {
 		case ctl := <-*ctlChan:
 			for name, i := range dumpers {
-				fmt.Printf("Closing dumper %s", name)
+				log.Printf("closing dumper %s\n", name)
 				i.Close()
 			}
 			if ctl == "quit" {
+				log.Println("closed dumper")
 				return
 			}
 		case msg := <-msgChan:
