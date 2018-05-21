@@ -78,10 +78,10 @@ func UnitParser(string) int {
 	return 0
 }
 
-func GetStringBy(source interface{}, path string) string {
+func GetStringBy(source interface{}, path string, defaultValue string) string {
 	s, can := GetBy(source, path).(string)
 	if !can {
-		return ""
+		return defaultValue
 	} else {
 		return s
 	}

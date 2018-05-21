@@ -17,6 +17,8 @@ func GetDumper(name string, config map[interface{}]interface{}) Dumper {
 		dump = &S3Dumper{}
 	case "stdout":
 		dump = &STDOUTDumper{}
+	case "swift":
+		dump = &SwiftDumper{}
 	default:
 		return nil
 	}
