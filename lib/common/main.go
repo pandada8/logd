@@ -1,13 +1,16 @@
 package common
 
 import (
-	"encoding/json"
 	"errors"
 	"reflect"
 	"strings"
 
+	"github.com/json-iterator/go"
+
 	syslog "github.com/influxdata/go-syslog/rfc5424"
 )
+
+var json = jsoniter.ConfigCompatibleWithStandardLibrary
 
 type Message struct {
 	Output  string

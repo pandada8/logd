@@ -6,112 +6,20 @@ import (
 	"os"
 	"os/signal"
 	"reflect"
-	"regexp"
 	"syscall"
-	"time"
 
 	"github.com/pandada8/logd/lib/common"
 	"github.com/pandada8/logd/lib/dumper"
 	"github.com/pandada8/logd/lib/sig"
 	"github.com/spf13/viper"
-
-	syslog "github.com/influxdata/go-syslog/rfc5424"
-	"github.com/tidwall/evio"
 )
 
 var (
-	mode    = "aio"
+	mode    = ""
 	msgChan = make(chan *common.Message)
 	ctlSig  *sig.Sig
 	force   = false
 )
-
-type Matcher struct {
-	Rules []MatcherRuleSet
-}
-
-type MatcherRuleSet struct {
-	Rules  []MatcherRule
-	Output string
-}
-
-type MatcherRule struct {
-	Field  string
-	Match  *regexp.Regexp
-	String *string
-}
-
-func NewMatcher() *Matcher {
-	var err error
-	rawRules := viper.Get("rules").([]interface{})
-
-	if len(rawRules) == 0 {
-		log.Println("warning: no rules specified, using default output")
-		return &Matcher{}
-	}
-	rules := []MatcherRuleSet{}
-	for n := len(rawRules) - 1; n >= 0; n-- {
-		s := MatcherRuleSet{}
-		r := rawRules[n].(map[interface{}]interface{})
-		s.Output = common.GetStringBy(r, "output")
-		if s.Output == "" {
-			s.Output = "default"
-		}
-		matches, ok := common.GetBy(r, "match").(map[interface{}]interface{})
-		if ok {
-			for field, reg := range common.ToStringMap(matches) {
-				m := MatcherRule{Field: field}
-				if len(reg) == 0 {
-					continue
-				}
-				if reg[0] == '/' && reg[len(reg)-1] == '/' {
-					reg = reg[1 : len(reg)-1]
-					m.Match, err = regexp.Compile(reg)
-				} else {
-					m.String = &reg
-				}
-				if err != nil {
-					continue
-				}
-				s.Rules = append(s.Rules, m)
-			}
-			rules = append(rules, s)
-		}
-	}
-	return &Matcher{rules}
-}
-
-func (matcher *Matcher) Match(payload map[string]interface{}) (output string, matched bool) {
-	if len(matcher.Rules) == 0 {
-		output = "default"
-		matched = true
-	} else {
-		for _, set := range matcher.Rules {
-			for _, rule := range set.Rules {
-				f := common.GetStringBy(payload, rule.Field)
-				if f == "" {
-					continue
-				}
-				if rule.Match != nil {
-					if rule.Match.MatchString(f) {
-						matched = true
-						break
-					}
-				} else if rule.String != nil {
-					if *rule.String == f {
-						matched = true
-						break
-					}
-				}
-			}
-			if matched {
-				output = set.Output
-				break
-			}
-		}
-	}
-	return
-}
 
 func GenDumpers() (dumpers map[string]dumper.Dumper) {
 	dumpers = map[string]dumper.Dumper{}
@@ -149,8 +57,6 @@ func signalHandler(ch chan os.Signal) {
 }
 
 func usage() {
-	fmt.Println("you can run this program in two mode")
-	fmt.Println("./logd  --  aio mode, all logic in run in one process and SO_REUSEPORT is not used")
 	fmt.Println("./logd <subcommand> -- SO_REUSEPORT is used, and you need a redis for message queue broker. subcommand could be 'collect' or 'dump'")
 }
 
@@ -172,6 +78,7 @@ func main() {
 	viper.SetDefault("listen", "udp://localhost:1514")
 	viper.SetDefault("verbose", true)
 	viper.SetDefault("reuseport", true)
+	viper.SetDefault("redis", "localhost:6379")
 	viper.SetConfigName("logd.cfg")
 	viper.AddConfigPath(".")
 	err := viper.ReadInConfig()
@@ -193,6 +100,9 @@ func main() {
 			return
 		}
 		mode = m
+	} else {
+		usage()
+		os.Exit(1)
 	}
 	log.Printf("%s mode started", mode)
 
@@ -201,18 +111,8 @@ func main() {
 	go signalHandler(singalChan)
 
 	switch mode {
-	case "aio":
-		// start dumper
-		go aioDumper()
-		fallthrough
 	case "collect":
-		listen := viper.GetString("listen")
-		if viper.GetBool("reuseport") {
-			listen = fmt.Sprintf("udp://%s?reuseport", listen)
-		} else {
-			listen = fmt.Sprintf("udp://%s", listen)
-		}
-		go collecter(listen)
+		go collecter()
 	case "dump":
 		// start dumper
 		fmt.Println("not implemented yet")
@@ -221,64 +121,9 @@ func main() {
 	log.Println("quited")
 }
 
-func collecter(listen string) {
-	//TODO: handle ^C
-	p := syslog.NewParser()
-	var events evio.Events
-
-	ctlChan := ctlSig.Recv()
-	var ctl string
-	defer func() {
-		ctlSig.Clean(ctlChan)
-	}()
-
-	go func() {
-		for {
-			ctl = <-*ctlChan
-		}
-	}()
-
-	matcher := NewMatcher()
-
-	events.Tick = func() (delay time.Duration, action evio.Action) {
-		delay = 1 * time.Second
-		// fmt.Printf("tick %s", ctl)
-		if ctl == "quit" {
-			action = evio.Shutdown
-			log.Println("close Collector")
-		}
-		return
-	}
-
-	events.Data = func(id int, in []byte) (out []byte, action evio.Action) {
-		// id has no means when used in udp
-		var matched bool
-		bestEffort := true
-		m, e := p.Parse(in, &bestEffort)
-		if e != nil {
-			fmt.Printf("failed to parse: %s\n err: %s\n", in, e)
-			// ignore
-			return
-		}
-		// FIXME: run matcher
-		if mode == "aio" {
-			// send to the chan
-			msg := common.NewMessage(m)
-			msg.Output, matched = matcher.Match(msg.Payload)
-			if matched {
-				msgChan <- msg
-			}
-		} else {
-			// send to the redis
-			fmt.Println("")
-		}
-		return
-	}
-	log.Printf("listen at %s", listen)
-	if err := evio.Serve(events, listen); err != nil {
-		panic(err.Error())
-		//FIXME: quit peacefully
-	}
+func collecter() {
+	c := NewCollector()
+	c.Listen()
 }
 
 func aioDumper() {

@@ -12,7 +12,7 @@ import (
 	"github.com/pandada8/logd/lib/common"
 )
 
-type FSDumper struct {
+type LocalFSDumper struct {
 	file           *os.File
 	buf            *bufio.Writer
 	location       string
@@ -22,7 +22,7 @@ type FSDumper struct {
 	tmpbuf         *bytes.Buffer
 }
 
-func (d *FSDumper) Init(config map[interface{}]interface{}) error {
+func (d *LocalFSDumper) Init(config map[interface{}]interface{}) error {
 	if location, found := config["location"]; found {
 		d.location = location.(string)
 	}
@@ -50,7 +50,7 @@ func (d *FSDumper) Init(config map[interface{}]interface{}) error {
 	return nil
 }
 
-func (d *FSDumper) prepareFile() (err error) {
+func (d *LocalFSDumper) prepareFile() (err error) {
 	d.file, err = os.Create(path.Join(d.location))
 	if err != nil {
 		return err
@@ -59,7 +59,7 @@ func (d *FSDumper) prepareFile() (err error) {
 	return
 }
 
-func (d *FSDumper) WriteLine(line string) (err error) {
+func (d *LocalFSDumper) WriteLine(line string) (err error) {
 	if d.buf == nil {
 		// init the buffer
 		err = d.prepareFile()
@@ -82,7 +82,7 @@ func (d *FSDumper) WriteLine(line string) (err error) {
 	return
 }
 
-func (d *FSDumper) Close() error {
+func (d *LocalFSDumper) Close() error {
 
 	if d.file != nil {
 		if d.buf != nil {
