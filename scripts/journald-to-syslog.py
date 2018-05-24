@@ -21,8 +21,6 @@ FILE="./log.json"
 
 GROUP=["SYSLOG_FACILITY", "SYSLOG_PID", "PRIORITY", "SYSLOG_IDENTIFIER", "MESSAGE"]
 
-s=None
-
 def get_id(cursor):
     payload = dict([i.split('=') for i in cursor.split(';')])
     return payload['x']
@@ -46,6 +44,7 @@ def send_log(obj):
         data = "<{}>1 {} {} {} {} {}".format(pri, ts, hostname, appname, procid, msgid)
         data += get_struct(obj)
         data += ' ' + obj['MESSAGE']
+        s=socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.sendto(data.encode("utf8"), (HOST, PORT))
     except:
         print(obj)
@@ -75,7 +74,7 @@ def main():
         PORT = int(sys.argv[3])
     if len(sys.argv) == 3:
         HOST = sys.argv[2]
-    s=socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    
     genSyslog()
 
 if __name__ == "__main__":
