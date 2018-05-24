@@ -63,6 +63,8 @@ func main() {
 	viper.SetDefault("reuseport", true)
 	viper.SetDefault("redis", "localhost:6379")
 	viper.SetDefault("compress_level", 1)
+	viper.SetDefault("step_size", 1e3)
+	viper.SetDefault("limit", 5e3)
 	viper.SetDefault("dumper_concurrency", 2)
 	viper.SetConfigName("logd.cfg")
 	viper.AddConfigPath(".")

@@ -20,7 +20,6 @@ type DumperBridge struct {
 	redis        *redis.Client
 	redisCluster *redis.ClusterClient
 	isCluster    bool
-	validKeys    []string
 	limit        int
 	concurrency  chan int
 	dumpers      map[string]*dumper.Dumper
@@ -57,12 +56,10 @@ func NewDumperBridge() *DumperBridge {
 			log.Println("failed to ping redis cluster")
 		}
 	}
-	validKeys := []string{}
 	return &DumperBridge{
 		isCluster:    isCluster,
 		redis:        redisClient,
 		redisCluster: redisClusterClient,
-		validKeys:    validKeys,
 		limit:        viper.GetInt("limit"),
 		concurrency:  make(chan int, viper.GetInt("dumper_concurrency")),
 	}
@@ -100,7 +97,12 @@ func (d *DumperBridge) GenerateFile(key string, force bool) (string, error) {
 		limit = d.limit
 	}
 	for dumped = 0; dumped < limit; {
-		result, err := d.redis.LRange(key, int64(dumped), int64(dumped+stepSize)).Result()
+		var result []string
+		if d.isCluster {
+			result, err = d.redisCluster.LRange(key, int64(dumped), int64(dumped+stepSize)).Result()
+		} else {
+			result, err = d.redis.LRange(key, int64(dumped), int64(dumped+stepSize)).Result()
+		}
 		if err != nil {
 			return "", err
 		}
@@ -109,7 +111,11 @@ func (d *DumperBridge) GenerateFile(key string, force bool) (string, error) {
 		}
 		dumped += len(result)
 	}
-	err = d.redis.LTrim(key, int64(dumped), -1).Err()
+	if d.isCluster {
+		err = d.redisCluster.LTrim(key, int64(dumped), -1).Err()
+	} else {
+		err = d.redis.LTrim(key, int64(dumped), -1).Err()
+	}
 	if err != nil {
 		return "", err
 	}
@@ -118,15 +124,13 @@ func (d *DumperBridge) GenerateFile(key string, force bool) (string, error) {
 }
 
 func (d *DumperBridge) DumpKey(key string) (err error) {
+	newName := fmt.Sprintf("%s.%d.json.zstd", key, time.Now().Unix())
+	log.Printf("dumping %s", newName)
 	dumped, err := d.GenerateFile(key, force)
 	if err != nil {
 		return err
 	}
 	defer os.Remove(dumped)
-	newName := fmt.Sprintf("%s.%d.json.zstd", key, time.Now().Unix())
-	if err != nil {
-		return
-	}
 	err = (*d.dumpers[key]).HandleFile(dumped, newName)
 	return
 }
@@ -135,8 +139,8 @@ func (d *DumperBridge) ShouldDump() []string {
 
 	ret := []string{}
 	if d.isCluster {
-		for _, key := range d.validKeys {
-			num, err := d.redisCluster.SCard(key).Result()
+		for key, _ := range d.dumpers {
+			num, err := d.redisCluster.LLen(key).Result()
 			if err != nil {
 				log.Printf("Error when checking, given up: %s", err)
 				break
@@ -146,7 +150,7 @@ func (d *DumperBridge) ShouldDump() []string {
 			}
 		}
 	} else {
-		for _, key := range d.validKeys {
+		for key, _ := range d.dumpers {
 			num, err := d.redis.LLen(key).Result()
 			if err != nil {
 				log.Printf("Error when checking, given up: %s", err)
@@ -197,7 +201,6 @@ func (d *DumperBridge) Start() {
 		HandleMutex.RLock()
 		shouldDump = d.ShouldDump()
 		HandleMutex.RUnlock()
-
 		if len(shouldDump) > 0 {
 			for _, key := range shouldDump {
 				err := d.DumpKey(key)

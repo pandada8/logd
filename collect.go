@@ -85,7 +85,7 @@ func NewCollector() *Collector {
 	}
 	listen := viper.GetString("listen")
 	if viper.GetBool("reuseport") {
-		listen = fmt.Sprintf("udp://%s?reuseport", listen)
+		listen = fmt.Sprintf("udp://%s?reuseport=true", listen)
 	} else {
 		listen = fmt.Sprintf("udp://%s", listen)
 	}
@@ -115,7 +115,6 @@ func (c *Collector) Listen() {
 			ctl = <-*ctlChan
 		}
 	}()
-
 	matcher := NewMatcher()
 	events.Tick = func() (delay time.Duration, action evio.Action) {
 		delay = 1 * time.Second
@@ -126,7 +125,6 @@ func (c *Collector) Listen() {
 		}
 		return
 	}
-
 	events.Data = func(id int, in []byte) (out []byte, action evio.Action) {
 		// id has no means when used in udp
 		var matched bool
