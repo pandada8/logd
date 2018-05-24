@@ -5,9 +5,9 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
-	"sync"
 	"time"
 
+	"github.com/pandada8/logd/lib/common"
 	"github.com/pandada8/logd/lib/dumper"
 
 	"github.com/DataDog/zstd"
@@ -21,8 +21,10 @@ type DumperBridge struct {
 	redisCluster *redis.ClusterClient
 	isCluster    bool
 	limit        int
-	concurrency  chan int
-	dumpers      map[string]*dumper.Dumper
+
+	worker *common.Worker
+
+	dumpers map[string]*dumper.Dumper
 }
 
 func NewDumperBridge() *DumperBridge {
@@ -61,18 +63,42 @@ func NewDumperBridge() *DumperBridge {
 		redis:        redisClient,
 		redisCluster: redisClusterClient,
 		limit:        viper.GetInt("limit"),
-		concurrency:  make(chan int, viper.GetInt("dumper_concurrency")),
+		worker:       common.NewWorker(viper.GetInt("dumper_concurrency")),
 	}
 }
 
-func (d *DumperBridge) GenerateFile(key string, force bool) (string, error) {
-	d.concurrency <- 1
-	defer func() {
-		<-d.concurrency
-	}()
+func (d *DumperBridge) Count(key string) (int, error) {
+	var (
+		num int64
+		err error
+	)
+	if d.isCluster {
+		num, err = d.redisCluster.LLen(key).Result()
+	} else {
+		num, err = d.redis.LLen(key).Result()
+	}
+	return int(num), err
+}
+
+func (d *DumperBridge) Range(key string, start int, end int) []string {
+	var (
+		result []string
+		err    error
+	)
+	if d.isCluster {
+		result, err = d.redisCluster.LRange(key, int64(start), int64(end)).Result()
+	} else {
+		result, err = d.redis.LRange(key, int64(start), int64(end)).Result()
+	}
+	if err != nil {
+		return []string{}
+	}
+	return result
+}
+
+func (d *DumperBridge) GenerateFile(key string) (string, error) {
 	var (
 		dumped int
-		limit  int
 	)
 	stepSize := viper.GetInt("step_size")
 	file, err := ioutil.TempFile("", "dumper")
@@ -87,25 +113,9 @@ func (d *DumperBridge) GenerateFile(key string, force bool) (string, error) {
 	}
 	zfile := zstd.NewWriterLevel(file, viper.GetInt("compress_level"))
 	defer zfile.Close()
-	if force {
-		limit64, err := d.redis.LLen(key).Result()
-		if err != nil {
-			return "", err
-		}
-		limit = int(limit64)
-	} else {
-		limit = d.limit
-	}
-	for dumped = 0; dumped < limit; {
-		var result []string
-		if d.isCluster {
-			result, err = d.redisCluster.LRange(key, int64(dumped), int64(dumped+stepSize)).Result()
-		} else {
-			result, err = d.redis.LRange(key, int64(dumped), int64(dumped+stepSize)).Result()
-		}
-		if err != nil {
-			return "", err
-		}
+
+	for dumped = 0; dumped < d.limit; {
+		result := d.Range(key, dumped, dumped+stepSize)
 		for _, line := range result {
 			zfile.Write([]byte(line + "\n"))
 		}
@@ -124,41 +134,38 @@ func (d *DumperBridge) GenerateFile(key string, force bool) (string, error) {
 }
 
 func (d *DumperBridge) DumpKey(key string) (err error) {
-	newName := fmt.Sprintf("%s.%d.json.zstd", key, time.Now().Unix())
-	log.Printf("dumping %s", newName)
-	dumped, err := d.GenerateFile(key, force)
-	if err != nil {
-		return err
+	d.worker.Run()
+	defer d.worker.Done()
+	count, _ := d.Count(key)
+	if count <= d.limit {
+		return
 	}
-	defer os.Remove(dumped)
-	err = (*d.dumpers[key]).HandleFile(dumped, newName)
+	for i := count / d.limit; i > 0; i-- {
+		newName := fmt.Sprintf("%s.%d.json.zstd", key, time.Now().UnixNano())
+		log.Printf("dumping %s", newName)
+		dumped, err := d.GenerateFile(key)
+		defer os.Remove(dumped)
+		if err != nil {
+			log.Println("???", err)
+		}
+		err = (*d.dumpers[key]).HandleFile(dumped, newName)
+		if err != nil {
+			log.Println("???", err)
+		}
+	}
 	return
 }
 
 func (d *DumperBridge) ShouldDump() []string {
-
 	ret := []string{}
-	if d.isCluster {
-		for key, _ := range d.dumpers {
-			num, err := d.redisCluster.LLen(key).Result()
-			if err != nil {
-				log.Printf("Error when checking, given up: %s", err)
-				break
-			}
-			if num > int64(d.limit) {
-				ret = append(ret, key)
-			}
+	for key, _ := range d.dumpers {
+		num, err := d.Count(key)
+		if err != nil {
+			log.Printf("Error when checking, given up: %s", err)
+			break
 		}
-	} else {
-		for key, _ := range d.dumpers {
-			num, err := d.redis.LLen(key).Result()
-			if err != nil {
-				log.Printf("Error when checking, given up: %s", err)
-				break
-			}
-			if num > int64(d.limit) {
-				ret = append(ret, key)
-			}
+		if num > d.limit {
+			ret = append(ret, key)
 		}
 	}
 	return ret
@@ -193,26 +200,21 @@ func (d *DumperBridge) Start() {
 		}
 	}()
 
-	HandleMutex := sync.RWMutex{}
-	checkInterval := 1 * time.Second
+	t := time.Now()
+	waitTime := 1 * time.Second
 
 	for {
-		var shouldDump []string
-		HandleMutex.RLock()
-		shouldDump = d.ShouldDump()
-		HandleMutex.RUnlock()
-		if len(shouldDump) > 0 {
-			for _, key := range shouldDump {
-				err := d.DumpKey(key)
-				if err != nil {
-					log.Println("error when dump %s: %s", key, err)
-				}
-			}
+		t = time.Now()
+		for key, _ := range d.dumpers {
+			go d.DumpKey(key)
 		}
+		d.worker.Wait()
 		if ctl == "quit" {
 			return
 		}
 		// update the checkInterval dynamically
-		time.Sleep(checkInterval)
+		if time.Now().Sub(t) < waitTime {
+			time.Sleep(waitTime - time.Now().Sub(t))
+		}
 	}
 }
