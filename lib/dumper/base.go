@@ -2,8 +2,7 @@ package dumper
 
 type Dumper interface {
 	Init(config map[interface{}]interface{}) error
-	WriteLine(line string) error
-	Close() error
+	HandleFile(path, newname string) error
 }
 
 func GetDumper(name string, config map[interface{}]interface{}) Dumper {

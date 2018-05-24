@@ -79,6 +79,8 @@ func main() {
 	viper.SetDefault("verbose", true)
 	viper.SetDefault("reuseport", true)
 	viper.SetDefault("redis", "localhost:6379")
+	viper.SetDefault("compress_level", 1)
+	viper.SetDefault("dumper_concurrency", 2)
 	viper.SetConfigName("logd.cfg")
 	viper.AddConfigPath(".")
 	err := viper.ReadInConfig()
@@ -124,37 +126,4 @@ func main() {
 func collecter() {
 	c := NewCollector()
 	c.Listen()
-}
-
-func aioDumper() {
-
-	ctlChan := ctlSig.Recv()
-
-	dumpers := GenDumpers()
-
-	log.Printf("loaded %d dumper(s)", len(dumpers))
-	defer func() {
-		ctlSig.Clean(ctlChan)
-	}()
-	for {
-		select {
-		case ctl := <-*ctlChan:
-			for name, i := range dumpers {
-				log.Printf("closing dumper %s\n", name)
-				i.Close()
-			}
-			if ctl == "quit" {
-				log.Println("closed dumper")
-				return
-			}
-		case msg := <-msgChan:
-			// FIXME: run the matcher
-			dumper, found := dumpers[msg.Output]
-			if found {
-				dumper.WriteLine(msg.ToJSONString())
-			} else {
-				log.Printf("[dump] fail to find output of %s", msg.Output)
-			}
-		}
-	}
 }

@@ -1,9 +1,15 @@
 package main
 
 import (
+	"fmt"
+	"github.com/pandada8/logd/lib/dumper"
+	"io/ioutil"
 	"log"
+	"os"
 	"sync"
 	"time"
+
+	"github.com/DataDog/zstd"
 
 	"github.com/go-redis/redis"
 	"github.com/spf13/viper"
@@ -14,7 +20,8 @@ type DumperBridge struct {
 	redisCluster *redis.ClusterClient
 	isCluster    bool
 	validKeys    []string
-	limit        int64
+	limit        int
+	concurrency  chan int
 }
 
 func NewDumperBridge() *DumperBridge {
@@ -54,29 +61,73 @@ func NewDumperBridge() *DumperBridge {
 		redis:        redisClient,
 		redisCluster: redisClusterClient,
 		validKeys:    validKeys,
-		limit:        viper.GetInt64("limit"),
+		limit:        viper.GetInt("limit"),
+		concurrency:  make(chan int, viper.GetInt("dumper_concurrency")),
 	}
 }
 
-func (d *DumperBridge) Dump(keys []string, force bool) {
-	for _, key := range keys {
-		read := c.limit
-		if force {
-			// try find all logs to
-		} else {
-			result, err := d.redis.LRange(key, 0, d.limit).Result()
-			if err != nil {
-				log.Println(err)
-				continue
-			}
-			go func() {
-				
-			}()
+func (d *DumperBridge) GenerateFile(key string, force bool) (string, error) {
+	d.concurrency<-1
+	defer func() {
+		<-d.concurrency
+	}()
+	var (
+		dumped int
+		limit  int
+	)
+	stepSize := viper.GetInt("step_size")
+	file, err := ioutil.TempFile("", "dumper")
+	defer file.Close()
+	defer func() {
+		if err != nil {
+			os.Remove(file.Name())
 		}
+	}()
+	if err != nil {
+		return "", err
 	}
+	zfile := zstd.NewWriterLevel(file, viper.GetInt("compress_level"))
+	defer zfile.Close()
+	if force {
+		limit64, err := d.redis.LLen(key).Result()
+		if err != nil {
+			return "", err
+		}
+		limit = int(limit64)
+	} else {
+		limit = d.limit
+	}
+	for dumped = 0; dumped < limit; {
+		result, err := d.redis.LRange(key, int64(dumped), int64(dumped+stepSize)).Result()
+		if err != nil {
+			return "", err
+		}
+		for _, line := range result {
+			zfile.Write([]byte(line + "\n"))
+		}
+		dumped += len(result)
+	}
+	err = d.redis.LTrim(key, int64(dumped), -1).Err()
+	if err != nil {
+		return "", err
+	}
+	
+	return file.Name(), nil
+}
+
+func (d *DumperBridge) DumpKey(key string) (err error) {
+	dumped, err := d.GenerateFile(key, force)
+	if err != nil {
+		return err
+	}
+	defer os.Remove(dumped)
+	newName := fmt.Scanf("%s.%d.json.zstd", key, time.Now().Unix())
+	err = dumper.GetDumper(key).HandleFile(dumped, newName)
+	return
 }
 
 func (d *DumperBridge) ShouldDump() []string {
+	
 	ret := []string{}
 	if d.isCluster {
 		for _, key := range d.validKeys {
@@ -85,23 +136,25 @@ func (d *DumperBridge) ShouldDump() []string {
 				log.Printf("Error when checking, given up: %s", err)
 				break
 			}
-			if num > d.limit {
+			if num > int64(d.limit) {
 				ret = append(ret, key)
 			}
 		}
 	} else {
 		for _, key := range d.validKeys {
-			num, err := d.redis.SCard(key).Result()
+			num, err := d.redis.LLen(key).Result()
 			if err != nil {
 				log.Printf("Error when checking, given up: %s", err)
 				break
 			}
-			if num > d.limit {
+			if num > int64(d.limit) {
 				ret = append(ret, key)
 			}
 		}
 	}
+	return ret
 }
+
 
 func (d *DumperBridge) Start() {
 	ctlChan := ctlSig.Recv()
@@ -129,7 +182,10 @@ func (d *DumperBridge) Start() {
 			shouldDump = d.validKeys
 		}
 		if len(shouldDump) > 0 {
-			d.Dump(shouldDump, ctl == "quit")
+			for _, key := range shouldDump {
+				dumped, err := d.DumpKey(key, ctl == "quit")
+				if 
+			}
 		}
 		if ctl == "quit" {
 			return
