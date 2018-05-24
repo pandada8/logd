@@ -10,8 +10,6 @@ func GetDumper(name string, config map[interface{}]interface{}) Dumper {
 	switch name {
 	case "fs":
 		dump = &LocalFSDumper{}
-	case "hdfs":
-		dump = &HDFSDumper{}
 	case "s3":
 		dump = &S3Dumper{}
 	case "swift":

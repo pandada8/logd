@@ -5,6 +5,8 @@ import (
 	"io"
 	"os"
 	"path"
+
+	"github.com/pandada8/logd/lib/common"
 )
 
 type LocalFSDumper struct {
@@ -12,10 +14,9 @@ type LocalFSDumper struct {
 }
 
 func (d *LocalFSDumper) Init(config map[interface{}]interface{}) error {
-	if path, found := config["location"]; found {
-		d.path = path.(string)
-	} else {
-		return errors.New("path not defined")
+	d.path = common.GetStringBy(config, "path", "")
+	if d.path == "" {
+		return errors.New("required config path")
 	}
 	return nil
 }

@@ -1,7 +1,10 @@
 package dumper
 
 import (
+	"io"
 	"log"
+	"os"
+	"path"
 
 	"github.com/ncw/swift"
 	"github.com/pandada8/logd/lib/common"
@@ -9,7 +12,9 @@ import (
 )
 
 type SwiftDumper struct {
-	connection *swift.Connection
+	connection    *swift.Connection
+	prefix        string
+	containerName string
 }
 
 func (d *SwiftDumper) Init(config map[interface{}]interface{}) (err error) {
@@ -23,22 +28,30 @@ func (d *SwiftDumper) Init(config map[interface{}]interface{}) (err error) {
 	if err != nil {
 		return
 	}
-	containerName := common.GetStringBy(config, "container", "log")
-	names, err := d.connection.ContainerNames(&swift.ContainersOpts{Prefix: containerName})
+	d.containerName = common.GetStringBy(config, "container", "log")
+	names, err := d.connection.ContainerNames(&swift.ContainersOpts{Prefix: d.containerName})
 	if err != nil {
 		return
 	}
-	if !funk.ContainsString(names, containerName) {
+	if !funk.ContainsString(names, d.containerName) {
 		log.Println("[swift] container not found. creating ....")
-		err = d.connection.ContainerCreate(containerName, nil)
+		err = d.connection.ContainerCreate(d.containerName, nil)
 	}
+	d.prefix = common.GetStringBy(config, "prefix", "")
 	return
 }
 
-func (d *SwiftDumper) WriteLine(line string) error {
-	return nil
-}
-
-func (d *SwiftDumper) Close() error {
-	return nil
+func (d *SwiftDumper) HandleFile(file, name string) error {
+	name = path.Join(d.prefix, name)
+	writer, err := d.connection.ObjectCreate(d.containerName, name, false, "", "application/zstd", nil)
+	defer writer.Close()
+	if err != nil {
+		return err
+	}
+	f, err := os.Open(file)
+	if err != nil {
+		return err
+	}
+	_, err = io.Copy(writer, f)
+	return err
 }
