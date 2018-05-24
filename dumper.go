@@ -2,12 +2,13 @@ package main
 
 import (
 	"fmt"
-	"github.com/pandada8/logd/lib/dumper"
 	"io/ioutil"
 	"log"
 	"os"
 	"sync"
 	"time"
+
+	"github.com/pandada8/logd/lib/dumper"
 
 	"github.com/DataDog/zstd"
 
@@ -22,6 +23,7 @@ type DumperBridge struct {
 	validKeys    []string
 	limit        int
 	concurrency  chan int
+	dumpers      map[string]*dumper.Dumper
 }
 
 func NewDumperBridge() *DumperBridge {
@@ -67,7 +69,7 @@ func NewDumperBridge() *DumperBridge {
 }
 
 func (d *DumperBridge) GenerateFile(key string, force bool) (string, error) {
-	d.concurrency<-1
+	d.concurrency <- 1
 	defer func() {
 		<-d.concurrency
 	}()
@@ -111,7 +113,7 @@ func (d *DumperBridge) GenerateFile(key string, force bool) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	
+
 	return file.Name(), nil
 }
 
@@ -121,13 +123,16 @@ func (d *DumperBridge) DumpKey(key string) (err error) {
 		return err
 	}
 	defer os.Remove(dumped)
-	newName := fmt.Scanf("%s.%d.json.zstd", key, time.Now().Unix())
-	err = dumper.GetDumper(key).HandleFile(dumped, newName)
+	newName := fmt.Sprintf("%s.%d.json.zstd", key, time.Now().Unix())
+	if err != nil {
+		return
+	}
+	err = (*d.dumpers[key]).HandleFile(dumped, newName)
 	return
 }
 
 func (d *DumperBridge) ShouldDump() []string {
-	
+
 	ret := []string{}
 	if d.isCluster {
 		for _, key := range d.validKeys {
@@ -155,8 +160,23 @@ func (d *DumperBridge) ShouldDump() []string {
 	return ret
 }
 
+func (d *DumperBridge) LoadDumpers() {
+	d.dumpers = map[string]*dumper.Dumper{}
+	output := viper.Get("output").([]interface{})
+	for n, i := range output {
+		cfg := i.(map[interface{}]interface{})
+		name := cfg["name"].(string)
+		dtype := cfg["type"].(string)
+		dumper := dumper.GetDumper(dtype, cfg)
+		if n == 0 {
+			d.dumpers["default"] = &dumper
+		}
+		d.dumpers[name] = &dumper
+	}
+}
 
 func (d *DumperBridge) Start() {
+	d.LoadDumpers()
 	ctlChan := ctlSig.Recv()
 	var ctl string
 	defer func() {
@@ -174,17 +194,16 @@ func (d *DumperBridge) Start() {
 
 	for {
 		var shouldDump []string
-		if ctl != "quit" {
-			HandleMutex.RLock()
-			shouldDump = d.ShouldDump()
-			HandleMutex.RUnlock()
-		} else {
-			shouldDump = d.validKeys
-		}
+		HandleMutex.RLock()
+		shouldDump = d.ShouldDump()
+		HandleMutex.RUnlock()
+
 		if len(shouldDump) > 0 {
 			for _, key := range shouldDump {
-				dumped, err := d.DumpKey(key, ctl == "quit")
-				if 
+				err := d.DumpKey(key)
+				if err != nil {
+					log.Println("error when dump %s: %s", key, err)
+				}
 			}
 		}
 		if ctl == "quit" {

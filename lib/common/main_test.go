@@ -14,9 +14,9 @@ func TestGetStringBy(t *testing.T) {
 			"yy":   "xxxx",
 		},
 	}
-	assert.Equal(t, "????", GetStringBy(source, "name"))
-	assert.Equal(t, "", GetStringBy(source, "pattern.xxx"))
-	assert.Equal(t, "xxxx", GetStringBy(source, "pattern.yy"))
+	assert.Equal(t, "????", GetStringBy(source, "name", ""))
+	assert.Equal(t, "", GetStringBy(source, "pattern.xxx", ""))
+	assert.Equal(t, "xxxx", GetStringBy(source, "pattern.yy", ""))
 }
 
 func TestGetBy(t *testing.T) {

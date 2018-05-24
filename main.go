@@ -9,7 +9,6 @@ import (
 	"syscall"
 
 	"github.com/pandada8/logd/lib/common"
-	"github.com/pandada8/logd/lib/dumper"
 	"github.com/pandada8/logd/lib/sig"
 	"github.com/spf13/viper"
 )
@@ -20,22 +19,6 @@ var (
 	ctlSig  *sig.Sig
 	force   = false
 )
-
-func GenDumpers() (dumpers map[string]dumper.Dumper) {
-	dumpers = map[string]dumper.Dumper{}
-	output := viper.Get("output").([]interface{})
-	for n, i := range output {
-		cfg := i.(map[interface{}]interface{})
-		name := cfg["name"].(string)
-		dtype := cfg["type"].(string)
-		dumper := dumper.GetDumper(dtype, cfg)
-		if n == 0 {
-			dumpers["default"] = dumper
-		}
-		dumpers[name] = dumper
-	}
-	return dumpers
-}
 
 func signalHandler(ch chan os.Signal) {
 	for {
@@ -114,16 +97,12 @@ func main() {
 
 	switch mode {
 	case "collect":
-		go collecter()
+		c := NewCollector()
+		go c.Listen()
 	case "dump":
-		// start dumper
-		fmt.Println("not implemented yet")
+		d := NewDumperBridge()
+		go d.Start()
 	}
 	<-ctlSig.Close
 	log.Println("quited")
-}
-
-func collecter() {
-	c := NewCollector()
-	c.Listen()
 }
